@@ -1,0 +1,191 @@
+---
+title: "HW3 321"
+author: "Ryan Lebo"
+date: "2024-09-23"
+output: html_document
+---
+
+```{r}
+library(knitr)
+library(kableExtra)
+library(MASS)
+library(ggplot2)
+library(phytools)
+library(tidyr)
+library(dplyr)
+library(boot)
+library(broom)
+
+```
+
+
+## Data Description
+The data in this project was taken from (https://users.stat.ufl.edu/~winner/datasets.html). My variables are
+
+*Golfer
+*Nation
+*Region
+*fairways
+*fairAtt
+*fairPct
+*totPutts
+*totRounds
+*avePutts
+*greenReg
+*totPrize
+*events
+*driveDist
+*sandSaves
+*sandAtt
+*sandPct
+
+##Practical Question
+My primary question is to figure out the association between greens in regualtion and the predictor values available in this data set.
+
+## Exploratory Data Analysis
+
+```{r fig.align='center'}
+lpga0 <- read.csv("https://raw.githubusercontent.com/RyanLebo/STA-321/refs/heads/main/lpga2022.csv", header = TRUE)
+lpga <- lpga0[, -1]
+# longitude and latitude will be used to make a map in the upcoming analysis.
+fairway<- lpga$fairways
+greens <- lpga$greenReg 
+plot(fairway, greens, main = "Greens in regulation vs Fairways hit")
+abline(v=121.529, h=24.96, col="red", lty=2)
+```
+
+## Full model and diagnostics
+We need to make a linear model with all of our predictor values.
+
+```{r}
+full.model = lm(greens ~ ., data = lpga)
+kable(summary(full.model)$coef, caption ="Regression Coefficients")
+
+```
+
+
+
+
+Now we should look at our residual diagnostic analysis to check how reliable our model is.
+
+```{r}
+par(mfrow=c(2,2))
+plot(full.model)
+
+```
+
+In these residual plots for scale-location seem to show some multicollinearity.
+
+##Box-Cox
+
+```{r}
+par(pty = "s", mfrow = c(2, 2), oma=c(.1,.1,.1,.1), mar=c(4, 0, 2, 0))
+##
+boxcox(greens~ fairway + fairAtt + totPutts +  avePutts + events + driveDist + sandSaves + sandAtt+ sandPct+ log(fairPct) + totRounds, data = lpga, lambda = seq(-20, 30, length = 10), 
+       xlab=expression(paste(lambda, ": log fairPct")))
+##
+boxcox(greens ~ fairway+ fairAtt + totPutts +  avePutts + events + driveDist + sandSaves + sandAtt+ sandPct+ fairPct  + totRounds, data = lpga, lambda = seq(-20, 30, length = 10), 
+       xlab=expression(paste(lambda, ": fairPct")))
+##
+boxcox(greens ~ log(1+fairway) + fairAtt+ totPutts +  avePutts + events + driveDist + sandSaves + sandAtt+ sandPct+  fairPct  + totRounds, data = lpga, lambda = seq(-20, 30, length = 10), xlab=expression(paste(lambda, ": log-fairway")))
+##
+boxcox(greens ~ log(1+fairway) + fairAtt+ totPutts +  avePutts + events + driveDist + sandSaves + sandAtt+ sandPct+  log(fairPct)  + 
+      totRounds, data = lpga, lambda = seq(-20, 30, length = 10), 
+      xlab=expression(paste(lambda, ": log-fairway, log.fairPct")))
+```
+
+This box-cox transformations shows the optimal equations for the response variables.
+
+## Square-root Transformation
+
+We perform Box-Cox transformation with log-transformed fairways hir to the nearest percent in the following.
+
+```{r}
+sqrt.fairway.log.pct = lm((greens)^0.5 ~ fairway + fairAtt+ totPutts +  avePutts + events + driveDist + sandSaves + sandAtt+ sandPct +  log(fairPct)  + totRounds, data = lpga)
+kable(summary(sqrt.fairway.log.pct)$coef, caption = "log-transformed model")
+
+```
+
+
+```{r fig.align='center', fig.height=5, fig.width=5}
+par(mfrow = c(2,2))
+plot(sqrt.fairway.log.pct)
+```
+
+This residual plot is different from the previous residual plot. This plot shows the points more scattered than the previous.
+
+## Goodness-of-fit Measures
+
+Now, we look at the goodness of fit measures for the models.
+
+```{r}
+log.green = lm(log(greens) ~ fairway + fairAtt + totPutts +  avePutts + events + driveDist + sandSaves + sandAtt+ sandPct + fairPct  + totRounds, data = lpga)
+kable(summary(log.green)$coef, caption = "log-transform model")
+```
+
+Residual plots are given below.
+
+```{r fig.align='center', fig.height=5, fig.width=5}
+par(mfrow = c(2,2))
+plot(log.green)
+```
+
+```{r fig.align='center', fig.width= 7, fig.height=4}
+
+par(pty = "s", mfrow = c(1, 3))
+
+qqnorm(full.model$residuals, main = "Full-Model")
+qqline(full.model$residuals)
+
+qqnorm(log.green$residuals, main = "Log-Price")
+qqline(log.green$residuals)
+
+qqnorm(sqrt.fairway.log.pct$residuals, main = "sqrt price log dist")
+qqline(sqrt.fairway.log.pct$residuals)
+```
+
+
+```{r}
+select=function(m){ 
+ e = m$resid                         
+ n0 = length(e)                        
+ SSE=(m$df)*(summary(m)$sigma)^2      
+ R.sq=summary(m)$r.squared             
+ R.adj=summary(m)$adj.r                
+ MSE=(summary(m)$sigma)^2              
+ Cp=(SSE/MSE)-(n0-2*(n0-m$df))        
+ AIC=n0*log(SSE)-n0*log(n0)+2*(n0-m$df)         
+ SBC=n0*log(SSE)-n0*log(n0)+(log(n0))*(n0-m$df)  
+ X=model.matrix(m)                     
+ H=X%*%solve(t(X)%*%X)%*%t(X)         
+ d=e/(1-diag(H))                       
+ PRESS=t(d)%*%d   
+ tbl = as.data.frame(cbind(SSE=SSE, R.sq=R.sq, R.adj = R.adj, Cp = Cp, AIC = AIC, SBC = SBC, PRD = PRESS))
+ names(tbl)=c("SSE", "R.sq", "R.adj", "Cp", "AIC", "SBC", "PRESS")
+ tbl
+ }
+
+```
+
+
+##Final Model
+
+This is the statistics of the chosen model.
+
+```{r}
+kable(summary(full.model)$coef, caption = "Stats of Final Model")
+```
+
+We have a sample size of 158 which is large. This means that all p-values are close to 0 meaning that all coefficients are significantly different from 0. In this study, we do not need to perform variable selection in the final model.
+
+
+##Conclusion/Discussion
+
+We had to use many different techniques such as Box-Cox to transform the response variables. This helped us make the best possible model for the data. 
+
+We used the same variables in all of our models and looked at the goodness of fit measures to access the models. 
+
+We ended up using the full model due to it having a better residual plot.
+
+
+
